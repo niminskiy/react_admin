@@ -1,6 +1,6 @@
 import "../../helpers/iframeLoader.js";
 import axios from 'axios';
-import React, { Component } from 'react';
+import React, {Component} from 'react';
 import DOMHelper from '../../helpers/dom-helper';
 import EditorText from '../editor-text';
 import UIkit from 'uikit';
@@ -8,6 +8,8 @@ import Spinner from '../spinner';
 import ConfirmModal from '../confirm-modal';
 import ChooseModal from '../choose-modal';
 import Panel from '../panel';
+import EditorMeta from '../editor-meta';
+import EditorImages from '../editor-images';
 
 export default class Editor extends Component {
     constructor() {
@@ -48,30 +50,32 @@ export default class Editor extends Component {
             .get(`../${page}?rnd=${Math.random()}`)
             .then(res => DOMHelper.parseStrToDOM(res.data))
             .then(DOMHelper.wrapTextNodes)
+            .then(DOMHelper.wrapImages)
             .then(dom => {
                 this.virtualDom = dom;
                 return dom;
             })
             .then(DOMHelper.serializeDOMToString)
-            .then(html => axios.post("./api/saveTempPage.php", { html }))
+            .then(html => axios.post("./api/saveTempPage.php", {html}))
             .then(() => this.iframe.load("../yfuy1g221ub_hhg44.html"))
             .then(() => axios.post("./api/deleteTempPage.php"))
             .then(() => this.enableEditing())
             .then(() => this.injectStyles())
             .then(cb);
-
+        
         this.loadBackupsList();
     }
 
-    async save(onSuccess, onError) {
+    async save() {
         this.isLoading();
         const newDom = this.virtualDom.cloneNode(this.virtualDom);
         DOMHelper.unwrapTextNodes(newDom);
+        DOMHelper.unwrapImages(newDom);
         const html = DOMHelper.serializeDOMToString(newDom);
         await axios
-            .post("./api/savePage.php", { pageName: this.currentPage, html })
-            .then(onSuccess)
-            .catch(onError)
+            .post("./api/savePage.php", {pageName: this.currentPage, html})
+            .then(() => this.showNotifications('Успешно сохранено', 'success'))
+            .catch(() => this.showNotifications('Ошибка сохранения', 'danger'))
             .finally(this.isLoaded);
 
         this.loadBackupsList();
@@ -83,6 +87,13 @@ export default class Editor extends Component {
             const virtualElement = this.virtualDom.body.querySelector(`[nodeid="${id}"]`);
 
             new EditorText(element, virtualElement);
+        });
+
+        this.iframe.contentDocument.body.querySelectorAll("[editableimgid]").forEach(element => {
+            const id = element.getAttribute("editableimgid");
+            const virtualElement = this.virtualDom.body.querySelector(`[editableimgid="${id}"]`);
+
+            new EditorImages(element, virtualElement, this.isLoading, this.isLoaded, this.showNotifications);
         });
     }
 
@@ -97,39 +108,46 @@ export default class Editor extends Component {
                 outline: 3px solid red;
                 outline-offset: 8px;
             }
+            [editableimgid]:hover {
+                outline: 3px solid orange;
+                outline-offset: 8px;
+            }
         `;
         this.iframe.contentDocument.head.appendChild(style);
+    }
+
+    showNotifications(message, status) {
+        UIkit.notification({message, status});
     }
 
     loadPageList() {
         axios
             .get("./api/pageList.php")
-            .then(res => this.setState({ pageList: res.data }))
+            .then(res => this.setState({pageList: res.data}))
     }
 
     loadBackupsList() {
         axios
             .get("./backups/backups.json")
-            .then(res => this.setState({
-                backupsList: res.data.filter(backup => {
-                    return backup.page === this.currentPage;
-                })
-            }))
+            .then(res => this.setState({backupsList: res.data.filter(backup => {
+                return backup.page === this.currentPage;
+            })
+        }))
     }
 
     restoreBackup(e, backup) {
         if (e) {
             e.preventDefault();
         }
-        UIkit.modal.confirm("Вы действительно хотите восстановить страницу из этой резервной копии? Все несохраненные данные будут потеряны!", { labels: { ok: 'Восстановить', cancel: 'Отмена' } })
-            .then(() => {
-                this.isLoading();
-                return axios
-                    .post('./api/restoreBackup.php', { "page": this.currentPage, "file": backup })
-            })
-            .then(() => {
-                this.open(this.currentPage, this.isLoaded);
-            })
+        UIkit.modal.confirm("Вы действительно хотите восстановить страницу из этой резервной копии? Все несохраненные данные будут потеряны!", {labels: {ok: 'Восстановить', cancel: 'Отмена'}})
+        .then(() => {
+            this.isLoading();
+            return axios
+                .post('./api/restoreBackup.php', {"page": this.currentPage, "file": backup})
+        })
+        .then(() => {
+            this.open(this.currentPage, this.isLoaded);
+        })
     }
 
     isLoading() {
@@ -145,25 +163,25 @@ export default class Editor extends Component {
     }
 
     render() {
-        const { loading, pageList, backupsList } = this.state;
+        const {loading, pageList, backupsList} = this.state;
         const modal = true;
         let spinner;
-
-        console.log(backupsList);
-
-        loading ? spinner = <Spinner active /> : spinner = <Spinner />
+        
+        loading ? spinner = <Spinner active/> : spinner = <Spinner />
 
         return (
             <>
                 <iframe src="" frameBorder="0"></iframe>
-
+                <input id="img-upload" type="file" accept="image/*" style={{display: 'none'}}></input>
+                
                 {spinner}
 
-                <Panel />
-
-                <ConfirmModal modal={modal} target={'modal-save'} method={this.save} />
-                <ChooseModal modal={modal} target={'modal-open'} data={pageList} redirect={this.init} />
-                <ChooseModal modal={modal} target={'modal-backup'} data={backupsList} redirect={this.restoreBackup} />
+                <Panel/>
+                
+                <ConfirmModal modal={modal}  target={'modal-save'} method={this.save}/>
+                <ChooseModal modal={modal}  target={'modal-open'} data={pageList} redirect={this.init}/>
+                <ChooseModal modal={modal}  target={'modal-backup'} data={backupsList} redirect={this.restoreBackup}/>
+               {this.virtualDom ?  <EditorMeta modal={modal}  target={'modal-meta'} virtualDom={this.virtualDom}/> : false}
             </>
         )
     }
